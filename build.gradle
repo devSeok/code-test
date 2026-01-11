@@ -1,3 +1,10 @@
+// [리뷰 62 - 보안 스캔 플러그인 부재 (High)]
+// 문제: OWASP Dependency Check 없어서 CVE 취약점 인지 못함
+// 원인: 빌드 속도 우선, 보안은 수동 점검으로 충분하다는 착각
+// 개선안: OWASP Dependency Check 플러그인 추가, CI/CD에서 빌드마다 스캔
+// 검증: ./gradlew dependencyCheckAnalyze 실행 후 리포트 확인
+// 참고: 우아한형제들 - 의존성 보안 취약점 관리
+
 plugins {
     id 'java'
     id 'org.springframework.boot' version '3.5.7'
@@ -14,11 +21,32 @@ java {
     }
 }
 
+// [리뷰 63 - Lombok 버전 고정 (Medium)]
+// 문제: 1.18.26 (2023.02) 사용 중 → 최신 1.18.34까지 8개 버전 뒤처짐
+// 원인: 초기 설정 후 업데이트 정책 부재
+// 개선안: 최신 버전으로 업데이트 + Gradle Versions Plugin으로 자동 확인
+// 검증: ./gradlew clean build 정상 작동 확인
+// 참고: 네이버 D2 - Lombok 활용법
 def lombokVersion = '1.18.26'
 
 repositories {
     mavenCentral()
 }
+
+// [리뷰 64 - H2 버전 미지정 (High)]
+// 문제: 버전 명시 없이 BOM 의존 → CVE-2022-23221 (RCE) 취약 가능
+// 원인: Spring Boot BOM에 의존
+// 개선안: runtimeOnly 'com.h2database:h2:2.2.224' 명시적 버전 지정
+// 검증: ./gradlew dependencies | grep h2로 버전 확인
+// 참고: 카카오 기술블로그 - 의존성 버전 관리 전략
+//
+// [리뷰 65 - 테스트 코드 부재 (Critical)]
+// 문제: contextLoads()만 존재, ProductController/Service 테스트 전혀 없음
+// 원인: "Postman으로 테스트하면 충분" 착각
+// 개선안: 단위 테스트(ProductServiceTest) + 통합 테스트(ProductControllerIntegrationTest) 작성
+//         JaCoCo 플러그인 추가로 커버리지 70% 목표
+// 검증: ./gradlew test 실행, 리뷰 #13 @Transactional 누락을 테스트로 발견 가능
+// 참고: 토스 기술블로그 - 실용적인 테스트 전략
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter'

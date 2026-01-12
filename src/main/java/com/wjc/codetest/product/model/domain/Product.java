@@ -1,7 +1,9 @@
 package com.wjc.codetest.product.model.domain;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
@@ -71,10 +73,36 @@ public class Product {
      * [리뷰 27 - JPA 표준 준수]
      * 문제: 없음 - protected 기본 생성자는 JPA 요구사항으로 올바름
      * 검증: JPA 스펙은 매개변수 없는 생성자 필수 (protected 또는 public)
+     * 개선안: Lombok으로 간소화 가능 - @NoArgsConstructor(access = AccessLevel.PROTECTED)
+     *
+     * 참고 링크:
+     *   - https://docs.jboss.org/hibernate/orm/6.0/userguide/html_single/Hibernate_User_Guide.html#entity-pojo
      */
     protected Product() {
     }
 
+    /**
+     * [리뷰 29 - public 생성자 노출로 인한 캡슐화 약화]
+     * 문제: public 생성자 직접 노출로 객체 생성 로직 통제 불가, 인자 순서 혼동 가능
+     * 원인: 정적 팩토리 메서드 패턴과 빌더 패턴 미적용
+     *
+     * 개선안: @Builder + @AllArgsConstructor(PRIVATE) + 정적 팩토리 메서드
+     *        - @Builder: 빌더 패턴으로 가독성 높은 객체 생성
+     *        - @AllArgsConstructor(PRIVATE): 생성자 은닉
+     *        - @NoArgsConstructor(PROTECTED): JPA 요구사항 충족
+     *        - public static Product of(category, name): 간편한 생성 메서드 제공
+     *
+     * 전/후 비교:
+     *   Before: new Product("전자제품", "노트북") → 인자 순서 혼동 가능
+     *   After:  Product.of("전자제품", "노트북") 또는
+     *           Product.builder().category("전자제품").name("노트북").build()
+     *
+     * 측정치: 코드 가독성 향상, 생성 로직 캡슐화, 필드 순서 혼동 방지
+     *
+     * 참고 링크:
+     *   - https://tecoble.techcourse.co.kr/post/2020-05-26-static-factory-method/ (정적 팩토리 메서드)
+     *   - https://johngrib.github.io/wiki/pattern/builder/ (빌더 패턴)
+     */
     public Product(String category, String name) {
         this.category = category;
         this.name = name;

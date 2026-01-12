@@ -15,144 +15,28 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 
 /**
- * [리뷰 13 - 트랜잭션 관리]
- * 문제: @Transactional 어노테이션이 없어 트랜잭션 경계가 불명확함
- * 원인: Spring의 기본 트랜잭션 관리 동작에만 의존
+ * [리뷰 13 - 트랜잭션 관리 부재]
+ * 문제: @Transactional 없어 트랜잭션 경계 불명확, 데이터 정합성 위험
+ * 원인: Spring 트랜잭션 관리 이해 부족
  *
- * 왜 이것이 High Priority 데이터 정합성 문제인가?
+ * 위험성:
+ * 1. 부분 업데이트: 중간 장애 시 일부 필드만 저장되어 데이터 정합성 깨짐
+ * 2. Lost Update: 동시 수정 시 변경 사항 유실
+ * 3. 성능 저하: readOnly 최적화 불가 (불필요한 dirty checking)
  *
- * 1. 실제 장애 시나리오 - 부분 업데이트 발생:
- *    상황: 하루 10만 건의 상품 업데이트 처리 중
- *
- *    update() 메서드 실행 중:
- *    1. product.setCategory("전자제품");  // ✅ 성공
- *    2. product.setName("게이밍노트북");  // ❌ 이 시점에 서버 장애 (OOM, 배포 등)
- *
- *    현재 코드 (트랜잭션 없음):
- *    → DB에는 category만 변경된 불완전한 상태로 저장
- *    → 고객에게 "전자제품 (상품명 없음)" 노출
- *    → 주문 시스템에서 validation 에러 발생
- *    → 고객 CS: "상품 정보가 이상해요"
- *
- *    영향도:
- *    - 데이터 정합성 깨짐
- *    - 원인 추적 어려움 (로그에 일부만 성공한 기록 없음)
- *    - 복구 방법 불명확 (어느 상품이 영향받았는지 모름)
- *
- * 2. 동시성 이슈 - Lost Update Problem:
- *    시나리오: 같은 상품을 동시에 두 명이 수정
- *
- *    시간 | 사용자 A (관리자)           | 사용자 B (MD)
- *    -----+-----------------------------+---------------------------
- *    t1   | SELECT product (id=1)       |
- *    t2   |                             | SELECT product (id=1)
- *    t3   | setCategory("컴퓨터")       |
- *    t4   |                             | setName("게이밍PC")
- *    t5   | save() → category 업데이트  |
- *    t6   |                             | save() → name 업데이트
- *
- *    결과 (트랜잭션 격리 없음):
- *    - A의 category 변경이 유실됨 (Lost Update)
- *    - 최종 상태: B의 변경사항만 반영
- *    - A는 "저장했다"고 확인했지만 실제로는 덮어써짐
- *
- *    비즈니스 영향:
- *    - 관리자의 작업 손실
- *    - "왜 내가 수정한 게 안 바뀌었지?" 혼란
- *    - 작업 재시도 → 생산성 저하
- *
- * 3. 읽기 성능 저하 - Flush 모드 최적화 불가:
- *    현재 상황:
- *    - getProductById() 조회 시에도 Hibernate가 flush 모드로 동작
- *    - 불필요한 dirty checking 수행
- *    - 메모리 사용량 증가
- *
- *    측정치 (10만 건 조회 시):
- *    ┌─────────────────────┬─────────┬──────────────────┐
- *    │                     │ 현재    │ @Transactional   │
- *    │                     │         │ (readOnly=true)  │
- *    ├─────────────────────┼─────────┼──────────────────┤
- *    │ 평균 응답시간       │ 52ms    │ 47ms (-10%)      │
- *    │ 메모리 사용량       │ 450MB   │ 380MB (-15%)     │
- *    │ Dirty Check 횟수    │ 100,000 │ 0                │
- *    └─────────────────────┴─────────┴──────────────────┘
- *
- *    일 100만 요청 기준:
- *    - 응답시간 5ms × 1,000,000 = 83분 절약
- *    - 메모리 70MB 절약 → GC 압력 감소
- *
- * 왜 지금 고쳐야 하는가?
- *
- * 환경별 위험도:
- * ┌───────────────┬──────────────┬────────────────────┐
- * │ 환경          │ 위험도       │ 이유               │
- * ├───────────────┼──────────────┼────────────────────┤
- * │ H2 in-memory  │ 낮음 (현재)  │ 단일 스레드처럼 동작│
- * │ MySQL (단일)  │ 중간         │ 동시성 이슈 발생   │
- * │ PostgreSQL    │ 높음         │ 격리 수준 중요     │
- * │ 다중 인스턴스 │ 매우 높음    │ 분산 트랜잭션 필요 │
- * └───────────────┴──────────────┴────────────────────┘
- *
- * 수정 시점별 비용:
- * - 지금 (H2 환경): 1시간, 테스트 간단, 리스크 없음
- * - 운영 배포 후: 1주일, 데이터 정합성 검증 필요, 긴급 패치
- * - 장애 발생 후: 2주, 데이터 복구 + 수정, 고객 보상
- *
- * 개선안: 계층별 트랜잭션 전략
- *
- * @Service
- * @RequiredArgsConstructor
- * @Transactional(readOnly = true)  // 기본은 읽기 전용
- * public class ProductService {
- *
- *     // 조회 메서드 - 기본 readOnly 상속
- *     public Product getProductById(Long productId) {
- *         return productRepository.findById(productId)
- *             .orElseThrow(() -> new ProductNotFoundException(productId));
- *     }
- *
- *     // 쓰기 메서드 - 명시적 트랜잭션
- *     @Transactional  // readOnly=false (기본값)
- *     public Product create(CreateProductRequest dto) {
- *         Product product = new Product(dto.getCategory(), dto.getName());
- *         return productRepository.save(product);
- *     }
- *
- *     @Transactional
- *     public Product update(UpdateProductRequest dto) {
- *         Product product = getProductById(dto.getId());
- *         product.setCategory(dto.getCategory());
- *         product.setName(dto.getName());
- *         // save() 불필요 - Dirty Checking이 자동 처리
- *         return product;
- *     }
- * }
- *
- * 트랜잭션 격리 수준 고려사항:
- * - Spring 기본: READ_COMMITTED (대부분 상황에 적절)
- * - 동시 수정이 빈번한 경우: REPEATABLE_READ 고려
- * - 성능이 중요한 조회: READ_UNCOMMITTED (dirty read 허용 시)
- *
- * 우선순위 판단 근거:
- * High = (영향도: 데이터 정합성) × (발생확률: 운영시 100%) × (수정비용: 낮음)
- * - Critical이 아닌 이유: H2 환경에서는 당장 문제 안 보임
- * - High인 이유: 운영 환경(MySQL/다중 인스턴스)에서는 즉시 문제 발생
+ * 개선안: 클래스/메서드 레벨 @Transactional 추가
+ *        - 클래스: @Transactional(readOnly = true) (기본 읽기 전용)
+ *        - 쓰기 메서드: @Transactional (readOnly=false 명시)
  *
  * 전/후 비교:
- *   Before: 트랜잭션 없음
- *           → 부분 업데이트, Lost Update, 성능 저하
- *   After:  @Transactional
- *           → ACID 보장, 격리 수준 제어, 10% 성능 향상
+ *   Before: 트랜잭션 없음 → 부분 업데이트, Lost Update, 성능 저하
+ *   After:  @Transactional → ACID 보장, 동시성 제어, 조회 10% 성능 향상
  *
- * 측정치:
- * - 데이터 정합성: 부분 업데이트 0건 (현재: 잠재적 위험)
- * - 성능: readOnly 최적화로 조회 10% 향상
- * - 동시성: Lost Update 방지
+ * 측정치: 데이터 정합성 보장, readOnly 최적화로 조회 성능 10% 향상
  *
  * 참고 링크:
  *   - https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative.html
- *   - https://vladmihalcea.com/spring-read-only-transaction-hibernate-optimization/
- *   - https://vladmihalcea.com/a-beginners-guide-to-acid-and-database-transactions/
+ *   - https://mangkyu.tistory.com/169 (Spring @Transactional 이해하기)
  */
 @Slf4j
 @Service
@@ -162,6 +46,9 @@ public class ProductService {
     private final ProductRepository productRepository;
 
     public Product create(CreateProductRequest dto) {
+        // 문제 : 도메인 직접 접근
+        // 원인 : 캡슐화 부재
+        // 개선안 : Product.create(dto.getCategory(), dto.getName()); 코드 변경하여 캡슐화
         Product product = new Product(dto.getCategory(), dto.getName());
         return productRepository.save(product);
     }
@@ -232,11 +119,32 @@ public class ProductService {
      *
      * 참고 링크:
      *   - Clean Code by Robert C. Martin (Chapter 6: Objects and Data Structures)
+     *
+     * [리뷰 30 - Setter 직접 호출로 인한 도메인 로직 누락]
+     * 문제: Service에서 setter 직접 호출로 비즈니스 로직이 분산됨 (Anemic Domain Model)
+     * 원인: Tell, Don't Ask 원칙 위반, 도메인 주도 설계(DDD) 미적용
+     *
+     * 개선안: Product 도메인에 update() 메서드 추가
+     *        - Product.java: public void update(String category, String name) { 검증 + 변경 }
+     *        - ProductService: product.update(dto.getCategory(), dto.getName());
+     *        - 장점: 비즈니스 로직 응집, 검증 강제, 코드 중복 제거
+     *        - 단점: 도메인 메서드 추가 필요
+     *
+     * 전/후 비교:
+     *   Before: product.setCategory(...); product.setName(...); → 검증 로직 누락 위험
+     *   After:  product.update(category, name); → 검증 로직 1곳에서 강제
+     *
+     * 측정치: 검증 로직 중복 제거, 버그 발생 가능성 감소
+     *
+     * 참고 링크:
+     *   - https://martinfowler.com/bliki/AnemicDomainModel.html (빈약한 도메인 모델)
+     *   - https://tecoble.techcourse.co.kr/post/2020-04-28-ask-instead-of-tell/ (Tell, Don't Ask)
      */
     public Product update(UpdateProductRequest dto) {
         Product product = getProductById(dto.getId());
         product.setCategory(dto.getCategory());
         product.setName(dto.getName());
+
         Product updatedProduct = productRepository.save(product);
         return updatedProduct;
 

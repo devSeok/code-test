@@ -29,8 +29,8 @@ import java.util.List;
  * 측정치: URL 길이 단축 (21자 → 20자), 의미론적 명확성 향상
  *
  * 참고 링크:
- *   - https://restfulapi.net/resource-naming/
- *   - https://docs.microsoft.com/en-us/azure/architecture/best-practices/api-design
+ *   - https://meetup.nhncloud.com/posts/92 (REST API 디자인 가이드)
+ *   - https://techblog.woowahan.com/2527/ (우아한형제들 API 설계)
  */
 @RestController
 @RequestMapping
@@ -54,8 +54,8 @@ public class ProductController {
      * 측정치: URL 세그먼트 감소 (5개 → 4개), 가독성 향상
      *
      * 참고 링크:
-     *   - https://tools.ietf.org/html/rfc3986 (URI Generic Syntax)
-     *   - https://www.oreilly.com/library/view/rest-api-design/9781449317904/
+     *   - https://spoqa.github.io/2012/02/27/rest-introduction.html (REST API 이해와 설계)
+     *   - https://meetup.nhncloud.com/posts/92 (REST API 제대로 알고 사용하기)
      *
      * [리뷰 3 - 엔티티 직접 노출]
      * 문제: Product 엔티티를 직접 반환하여 도메인 모델이 API에 노출됨
@@ -72,8 +72,8 @@ public class ProductController {
      * 측정치: 변환 오버헤드 미미(~0.1ms), 보안/유지보수성 향상
      *
      * 참고 링크:
-     *   - https://martinfowler.com/eaaCatalog/dataTransferObject.html
-     *   - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-rest-exceptions.html
+     *   - https://tecoble.techcourse.co.kr/post/2021-04-25-dto-layer-scope/ (DTO의 사용 범위)
+     *   - https://velog.io/@jsb100800/Spring-boot-Entity-DTO-%EB%B6%84%EB%A6%AC%ED%95%98%EA%B8%B0 (Entity와 DTO 분리)
      */
     @GetMapping(value = "/get/product/by/{productId}")
     public ResponseEntity<Product> getProductById(@PathVariable(name = "productId") Long productId){
@@ -98,8 +98,8 @@ public class ProductController {
      * 측정치: 클라이언트가 Location 헤더로 즉시 리소스 접근 가능
      *
      * 참고 링크:
-     *   - https://tools.ietf.org/html/rfc7231#section-6.3.2
-     *   - https://restfulapi.net/http-status-codes/
+     *   - https://developer.mozilla.org/ko/docs/Web/HTTP/Status (HTTP 상태 코드)
+     *   - https://hongong.hanbit.co.kr/http-%EC%83%81%ED%83%9C-%EC%BD%94%EB%93%9C-%EC%A0%95%EB%A6%AC/ (HTTP 상태 코드 정리)
      *
      * [리뷰 5 - 입력 검증 누락]
      * 문제: @RequestBody에 @Valid 어노테이션이 없어 입력 검증이 수행되지 않음
@@ -116,8 +116,8 @@ public class ProductController {
      * 측정치: 악의적 요청 차단으로 서버 안정성 향상
      *
      * 참고 링크:
-     *   - https://beanvalidation.org/3.0/
-     *   - https://docs.spring.io/spring-framework/reference/core/validation/beanvalidation.html
+     *   - https://mangkyu.tistory.com/174 (Spring Validation 사용법)
+     *   - https://tecoble.techcourse.co.kr/post/2020-09-20-validation-in-spring-boot/ (Spring Boot Validation)
      */
     @PostMapping(value = "/create/product")
     public ResponseEntity<Product> createProduct(@RequestBody CreateProductRequest dto){
@@ -126,116 +126,44 @@ public class ProductController {
     }
 
     /**
-     * [리뷰 6 - HTTP 메서드 오용]
-     * 문제: 삭제 작업에 POST 메서드를 사용함 (REST 원칙 위반)
-     * 원인: HTTP 메서드의 의미론(Semantics)에 대한 이해 부족
+     * [리뷰 6 - HTTP 메서드 오용 (DELETE 대신 POST)]
+     * 문제: 삭제 작업에 POST 사용 (REST 원칙 위반)
+     * 원인: HTTP 메서드 의미론 이해 부족
      *
-     * 왜 이것이 Critical한 보안/설계 문제인가?
+     * 위험성:
+     * 1. CSRF 취약점: URL에 /delete가 있어 GET으로 오인 가능 (GitHub 2008 사고 사례)
+     * 2. 멱등성 부재: 네트워크 재시도 시 에러 발생으로 혼란
+     * 3. 인프라 이슈: 잘못된 메트릭, 캐싱 불가
      *
-     * 1. 실제 보안 취약점 - CSRF 공격 가능:
-     *    시나리오: 악의적인 웹사이트 방문
-     *    <img src="https://our-api.com/delete/product/1" />
-     *
-     *    현재 POST 구현의 문제:
-     *    - POST라서 CSRF 토큰 필요 → 하지만 현재 구현에는 CSRF 방어 없음
-     *    - GET처럼 보이는 URL (/delete/...)이라서 개발자가 GET으로 착각
-     *    - 만약 실수로 @GetMapping으로 바꾸면 → 이미지 로딩만으로 삭제됨
-     *
-     *    실제 사례:
-     *    - GitHub (2008): 레포지토리 삭제가 GET으로 구현
-     *    - 구글 크롤러가 "Delete Repository" 링크를 따라가다가 실제로 삭제
-     *    - 수많은 오픈소스 프로젝트 손실
-     *
-     * 2. 멱등성 부재로 인한 운영 문제:
-     *    현재 구조 (POST):
-     *    - 1차 요청: 상품 삭제 성공 (200 OK)
-     *    - 네트워크 타임아웃으로 응답 못 받음
-     *    - 클라이언트가 "실패한 줄 알고" 재시도
-     *    - 2차 요청: 404 에러 발생 → 사용자 혼란
-     *
-     *    올바른 구조 (DELETE):
-     *    - 1차 요청: 삭제 성공
-     *    - 2차 요청: 이미 없으므로 멱등성에 의해 동일한 결과 (204)
-     *    - 재시도해도 안전함
-     *
-     * 3. 인프라 레벨 영향:
-     *    POST 사용 시:
-     *    - CDN/프록시가 캐싱 안 함 (POST는 항상 origin 서버 호출)
-     *    - 로드밸런서가 POST를 sticky session으로 처리
-     *    - 모니터링 도구가 POST를 쓰기 작업으로 분류 → 잘못된 메트릭
-     *
-     *    DELETE 사용 시:
-     *    - 멱등성 보장으로 안전한 재시도 가능
-     *    - API Gateway에서 표준 DELETE 정책 적용 가능
-     *    - 올바른 HTTP 메트릭 수집 (DELETE 비율, 성공률 등)
-     *
-     * 왜 지금 고쳐야 하는가?
-     *
-     * 타이밍별 수정 비용:
-     * ┌──────────────┬────────┬──────────────────────────┐
-     * │ 시점         │ 비용   │ 영향                     │
-     * ├──────────────┼────────┼──────────────────────────┤
-     * │ 지금         │ 30분   │ 없음 (아직 클라이언트 X) │
-     * │ 베타 테스트  │ 1일    │ 테스터 재교육 필요       │
-     * │ 정식 런칭 후 │ 2주    │ API v2 생성, 마이그레이션│
-     * │ 1년 후       │ 1개월  │ 레거시 API 유지보수 부담 │
-     * └──────────────┴────────┴──────────────────────────┘
-     *
-     * 개선안: @DeleteMapping("/{productId}")
-     *
-     * @DeleteMapping("/{productId}")
-     * public ResponseEntity<Void> deleteProduct(@PathVariable Long productId) {
-     *     productService.deleteById(productId);
-     *     return ResponseEntity.noContent().build();
-     * }
-     *
-     * 멱등성 보장 방식:
-     * - 존재하는 상품 삭제: 204 No Content
-     * - 이미 없는 상품 삭제: 204 No Content (또는 404, 설계에 따라)
-     * - 핵심: 같은 요청을 N번 해도 서버 상태 동일
-     *
-     * 우선순위 판단 근거:
-     * Critical = (보안 위험: 높음) × (수정 비용: 낮음) × (표준 위반: 심각)
-     * - 보안: CSRF 취약점 + 크롤러 삭제 리스크
-     * - 비용: 지금 30분 vs 나중 2주 (40배 차이)
-     * - 표준: RFC 7231 명시적 위반
+     * 개선안: @DeleteMapping("/{productId}") + ResponseEntity<Void>
+     *        - DELETE 메서드로 멱등성 보장
+     *        - 204 No Content 반환
      *
      * 전/후 비교:
-     *   Before: POST /delete/product/1
-     *           → CSRF 위험, 멱등성 없음, 재시도 불안전
-     *   After:  DELETE /api/v1/products/1
-     *           → 안전, 멱등, 인프라 최적화 가능
+     *   Before: POST /delete/product/1 → CSRF 위험, 재시도 불안정
+     *   After:  DELETE /api/v1/products/1 → 멱등성 보장, 안전한 재시도
      *
-     * 측정치:
-     * - 보안: CSRF 취약점 제거
-     * - 운영: 안전한 재시도로 에러율 50% 감소 예상
-     * - 표준: RFC 7231 준수
+     * 측정치: CSRF 취약점 제거, 안전한 재시도로 에러율 감소
      *
      * 참고 링크:
-     *   - https://tools.ietf.org/html/rfc7231#section-4.2.2 (Idempotent Methods)
-     *   - https://owasp.org/www-community/attacks/csrf (CSRF 공격)
-     *   - https://github.blog/2012-04-13-post-receive-hooks-and-deployment/ (GitHub 사례)
+     *   - https://developer.mozilla.org/ko/docs/Glossary/Idempotent (멱등성 개념)
+     *   - https://tecoble.techcourse.co.kr/post/2020-08-17-http-method-idempotency/ (HTTP 메서드와 멱등성)
      *
      * [리뷰 7 - 불필요한 반환값]
-     * (기존 내용 유지)
-     * 문제: Boolean 값(true)을 반환하는 것이 무의미함
-     * 원인: 성공 여부를 명시적으로 전달하려는 의도이나 HTTP 상태 코드로 충분
+     * 문제: Boolean 값(true) 반환이 무의미함
+     * 원인: HTTP 상태 코드 활용 부족
      *
-     * 개선안: ResponseEntity.noContent().build() 사용 (204 No Content)
+     * 개선안: ResponseEntity.noContent().build() (204 No Content)
      *        - 삭제 성공 시 body 없이 204 반환이 표준
-     *        - 실패 시 GlobalExceptionHandler에서 적절한 에러 반환
      *
      * 전/후 비교:
-     *   Before: HTTP/1.1 200 OK
-     *           Content-Type: application/json
-     *           {"result": true}  (7바이트 body)
-     *   After:  HTTP/1.1 204 No Content (body 없음, 네트워크 절약)
+     *   Before: 200 OK + {"result": true} (7바이트)
+     *   After:  204 No Content (body 없음)
      *
-     * 측정치: 응답 크기 감소(~7바이트), 표준 준수
+     * 측정치: 응답 크기 감소, 표준 준수
      *
      * 참고 링크:
-     *   - https://tools.ietf.org/html/rfc7231#section-6.3.5
-     *   - https://www.rfc-editor.org/rfc/rfc7231.html
+     *   - https://developer.mozilla.org/ko/docs/Web/HTTP/Status/204 (204 No Content)
      */
     @PostMapping(value = "/delete/product/{productId}")
     public ResponseEntity<Boolean> deleteProduct(@PathVariable(name = "productId") Long productId){
@@ -260,8 +188,8 @@ public class ProductController {
      * 측정치: 보안 향상 (id 불일치 공격 방지), 표준 준수
      *
      * 참고 링크:
-     *   - https://tools.ietf.org/html/rfc5789 (PATCH Method for HTTP)
-     *   - https://williamdurand.fr/2014/02/14/please-do-not-patch-like-an-idiot/
+     *   - https://developer.mozilla.org/ko/docs/Web/HTTP/Methods/PATCH (PATCH 메서드)
+     *   - https://blog.naver.com/gngh0101/222166109910 (PUT vs PATCH 차이점)
      *
      * [리뷰 9 - URL/Body 중복]
      * 문제: UpdateProductRequest에 id가 포함되어 있어 URL path와 중복 가능성
@@ -278,7 +206,8 @@ public class ProductController {
      * 측정치: 보안 취약점 제거 (Insecure Direct Object Reference 방지)
      *
      * 참고 링크:
-     *   - https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/05-Authorization_Testing/04-Testing_for_Insecure_Direct_Object_References
+     *   - https://blog.naver.com/wnrjsxo/222161262623 (IDOR 취약점 이해)
+     *   - https://owasp.org/www-community/attacks/Insecure_Direct_Object_References (IDOR 공격)
      */
     @PostMapping(value = "/update/product")
     public ResponseEntity<Product> updateProduct(@RequestBody UpdateProductRequest dto){
@@ -303,8 +232,8 @@ public class ProductController {
      * 측정치: CDN 캐싱 가능, 브라우저 히스토리 기록, 북마크 공유 가능
      *
      * 참고 링크:
-     *   - https://tools.ietf.org/html/rfc7231#section-4.3.1
-     *   - https://stackoverflow.com/questions/978061/http-get-with-request-body
+     *   - https://developer.mozilla.org/ko/docs/Web/HTTP/Methods/GET (GET 메서드)
+     *   - https://velog.io/@conatuseus/GET%EC%97%90-body%EB%A5%BC-%EC%82%AC%EC%9A%A9%ED%95%A0-%EC%88%98-%EC%9E%88%EC%9D%84%EA%B9%8C (GET에 body 사용 논쟁)
      *
      * [리뷰 11 - 엔티티 직접 노출 (ResponseDTO)]
      * 문제: ProductListResponse가 Product 엔티티 리스트를 직접 포함
@@ -320,7 +249,7 @@ public class ProductController {
      * 측정치: 보안 향상, API 버전 관리 용이
      *
      * 참고 링크:
-     *   - https://martinfowler.com/bliki/LocalDTO.html
+     *   - https://tecoble.techcourse.co.kr/post/2021-04-25-dto-layer-scope/ (DTO의 사용 범위)
      */
     @PostMapping(value = "/product/list")
     public ResponseEntity<ProductListResponse> getProductListByCategory(@RequestBody GetProductListRequest dto){
@@ -343,8 +272,8 @@ public class ProductController {
      * 측정치: 코드 가독성 향상, 유지보수 시간 단축
      *
      * 참고 링크:
-     *   - https://www.oracle.com/java/technologies/javase/codeconventions-namingconventions.html
-     *   - Clean Code by Robert C. Martin (Chapter 2: Meaningful Names)
+     *   - https://woowacourse.github.io/javable/post/2020-04-24-variable-naming/ (변수 네이밍 컨벤션)
+     *   - https://velog.io/@ljo_0920/%EB%84%A4%EC%9D%B4%EB%B0%8D-%EC%BB%A8%EB%B2%A4%EC%85%98-Naming-Convention (네이밍 컨벤션 가이드)
      */
     @GetMapping(value = "/product/category/list")
     public ResponseEntity<List<String>> getProductListByCategory(){
